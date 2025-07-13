@@ -3,21 +3,117 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Meu Site Incrível</title>
+    <title>Analisador de Ressonância Magnética</title>
+    
+    <!-- 1. Incluir as bibliotecas necessárias -->
+    <!-- TensorFlow.js -->
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@latest/dist/tf.min.js"></script>
+    <!-- NIFTI Reader JS (pegando de um CDN como o unpkg ) -->
+    <script src="https://unpkg.com/nifti-reader-js@0.5.4/browser/nifti-reader.js"></script>
+
     <style>
-        body {
-            font-family: sans-serif;
-            background-color: #f0f0f0;
-            text-align: center;
-            padding-top: 50px;
-        }
-        h1 {
-            color: #333;
-        }
+        body { font-family: sans-serif; text-align: center; padding: 20px; }
+        #status { margin: 20px; font-weight: bold; font-size: 1.2em; }
+        #resultado { padding: 15px; background-color: #f0f0f0; border: 1px solid #ccc; }
     </style>
 </head>
 <body>
-    <h1>Olá, Mundo! Bem-vindo ao meu site.</h1>
-    <p>Esta é a minha primeira página na internet com o GitHub Pages.</p>
+
+    <h1>Upload de Arquivo .nii para Análise</h1>
+    <p>Selecione um arquivo de ressonância magnética (.nii ou .nii.gz ) para que o modelo faça a previsão.</p>
+    
+    <input type="file" id="nii-upload" accept=".nii,.nii.gz">
+
+    <div id="status">Aguardando arquivo...</div>
+    <h2>Previsão do Modelo:</h2>
+    <div id="resultado">O resultado aparecerá aqui.</div>
+
+    <script>
+        const inputArquivo = document.getElementById('nii-upload');
+        const statusDisplay = document.getElementById('status');
+        const resultadoDisplay = document.getElementById('resultado');
+
+        let modelo = null;
+
+        // 2. Carregar o modelo de IA assim que a página abrir
+        async function carregarModelo() {
+            statusDisplay.innerText = 'Carregando modelo de IA...';
+            try {
+                // O caminho para o seu model.json (que deve estar no mesmo repositório)
+                modelo = await tf.loadLayersModel('./modelo_web/model.json');
+                statusDisplay.innerText = 'Modelo carregado! Por favor, selecione um arquivo .nii.';
+                console.log('Modelo carregado com sucesso.');
+            } catch (error) {
+                statusDisplay.innerText = 'Erro ao carregar o modelo.';
+                console.error(error);
+            }
+        }
+        carregarModelo(); // Inicia o carregamento do modelo
+
+        // 3. Lidar com o upload do arquivo .nii
+        inputArquivo.addEventListener('change', async function(evento) {
+            if (!modelo) {
+                statusDisplay.innerText = 'O modelo ainda não foi carregado. Tente novamente em alguns segundos.';
+                return;
+            }
+            if (evento.target.files.length === 0) return;
+
+            const arquivo = evento.target.files[0];
+            statusDisplay.innerText = `Lendo o arquivo: ${arquivo.name}...`;
+
+            const buffer = await arquivo.arrayBuffer(); // Ler o arquivo como um buffer de bytes
+
+            // 4. Usar a biblioteca nifti-reader-js para decodificar o arquivo
+            let dadosNifti;
+            if (nifti.isNIFTI(buffer)) {
+                const header = nifti.readHeader(buffer);
+                const imagem = nifti.readImage(header, buffer);
+                dadosNifti = new Float32Array(imagem); // Converte para um array de números
+                statusDisplay.innerText = 'Arquivo NIfTI lido. Pré-processando...';
+                
+                // 5. Pré-processar e fazer a previsão
+                fazerPrevisao(dadosNifti, header);
+            } else {
+                statusDisplay.innerText = 'Erro: O arquivo selecionado não parece ser um arquivo NIfTI válido.';
+            }
+        });
+
+        async function fazerPrevisao(dadosImagem, header) {
+            // --- ESTA É A PARTE MAIS IMPORTANTE E QUE VOCÊ PRECISA ADAPTAR ---
+            // Você precisa saber exatamente como seu modelo espera receber os dados.
+            // Ex: Qual o tamanho da imagem? (ex: 128x128x128)
+            // Precisa normalizar os dados? (ex: dividir por 255)
+
+            statusDisplay.innerText = 'Executando o modelo...';
+
+            // Exemplo de pré-processamento:
+            // a. Converter o array 1D em um tensor 4D ou 5D que o modelo espera
+            //    (batch_size, altura, largura, profundidade, canais)
+            const dims = [1, header.dims[1], header.dims[2], header.dims[3], 1];
+            let tensor = tf.tensor(dadosImagem, dims);
+
+            // b. (Opcional) Redimensionar se necessário. Isso é complexo para 3D.
+            // O ideal é que seu modelo seja treinado com o mesmo tamanho de imagem.
+
+            // c. (Opcional) Normalizar os dados
+            // const tensorNormalizado = tensor.div(tf.scalar(255.0));
+
+            // 6. Fazer a previsão
+            const previsao = modelo.predict(tensor);
+            const resultadoArray = await previsao.data(); // Pega os dados da previsão
+
+            // 7. Exibir o resultado
+            statusDisplay.innerText = 'Análise Concluída!';
+            // Formate o resultado como for mais apropriado (ex: probabilidade de uma doença)
+            resultadoDisplay.innerText = `Resultado da Análise: ${resultadoArray.toString()}`;
+
+            console.log('Resultado da previsão:', resultadoArray);
+
+            // Limpar a memória da GPU
+            tensor.dispose();
+            previsao.dispose();
+        }
+    </script>
+
 </body>
 </html>
