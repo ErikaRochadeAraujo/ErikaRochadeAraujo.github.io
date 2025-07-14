@@ -13,6 +13,20 @@
         window.NIFTI = NIFTI;
     </script>
 
+    <script>
+        // Este script vai tentar acessar NIFTI imediatamente após o carregamento.
+        // Se ele ainda não estiver definido, o problema é na própria biblioteca.
+        try {
+            if (typeof NIFTI === 'undefined' ) {
+                console.error('DEBUG: NIFTI ainda não está definido imediatamente após o script da biblioteca.');
+            } else {
+                console.log('DEBUG: NIFTI está definido. Versão:', NIFTI.version);
+            }
+        } catch (e) {
+            console.error('DEBUG: Erro ao tentar acessar NIFTI:', e);
+        }
+    </script>
+
 
     
     
