@@ -360,13 +360,13 @@
                 atualizarProgresso(50);
 
                 // Verifica se é um arquivo NIfTI válido
-                if (!nifti.isNIFTI(dadosBuffer)) {
-                    throw new Error('O arquivo selecionado não é um arquivo NIfTI válido.');
+                if (!NIFTI.isNIFTI(dadosBuffer)) {
+                    throw new Error("O arquivo selecionado não é um arquivo NIfTI válido.");
                 }
 
                 // Lê o header e os dados da imagem
-                const header = nifti.readHeader(dadosBuffer);
-                const imagemData = nifti.readImage(header, dadosBuffer);
+                const header = NIFTI.readHeader(dadosBuffer);
+                const imagemData = NIFTI.readImage(header, dadosBuffer);
                 
                 atualizarStatus('🔄 Pré-processando dados...', 'info', true);
                 atualizarProgresso(75);
