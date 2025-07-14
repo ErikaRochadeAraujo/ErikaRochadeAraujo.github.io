@@ -280,6 +280,8 @@
                         Os resultados da análise aparecerão aqui após o upload do arquivo.
                     </p>
                 </div>
+                <!-- Adicione este canvas para a visualização da segmentação -->
+                <canvas id="segmentation-canvas" style="width: 100%; height: auto; border: 1px solid #ccc; margin-top: 20px;"></canvas>
             </div>
         </div>
 
@@ -301,6 +303,8 @@
         const resultsContent = document.getElementById('results-content');
         const progressBar = document.getElementById('progress-bar');
         const progressFill = document.getElementById('progress-fill');
+        const segmentationCanvas = document.getElementById('segmentation-canvas'); // Novo
+        const ctx = segmentationCanvas.getContext('2d'); // Novo
 
         // Variáveis globais
         let modelo = null;
@@ -378,7 +382,7 @@
 
                 // Verifica se é um arquivo NIfTI válido
                 if (!NIFTI.isNIFTI(dadosBuffer)) {
-                    throw new Error("O arquivo selecionado não é um arquivo NIfTI válido.");
+                    throw new Error('O arquivo selecionado não é um arquivo NIfTI válido.');
                 }
 
                 // Lê o header e os dados da imagem
@@ -480,43 +484,35 @@
             }
         }
 
-        // Função para fazer a previsão
+        // Função para fazer a previsão e retornar a segmentação bruta
         async function fazerPrevisao(tensorEntrada) {
             try {
                 atualizarStatus('🧠 Executando análise com IA...', 'info', true);
                 atualizarProgresso(90);
 
-                // Faz a previsão
                 const previsao = modelo.predict(tensorEntrada);
-                const resultadoArray = await previsao.data();
+                
+                // A previsão é um tensor de saída (segmentação)
+                // O modelo produz uma segmentação com 4 classes (softmax)
+                // Precisamos obter a classe com maior probabilidade para cada pixel
+                const segmentacaoTensor = tf.argMax(previsao, -1); // Pega o índice da classe com maior probabilidade
+                const segmentacaoArray = await segmentacaoTensor.data(); // Converte para array JavaScript
 
-                console.log('Resultado da previsão:', resultadoArray);
-                console.log('Formato da saída:', previsao.shape);
+                // Limpar tensors intermediários
+                previsao.dispose();
+                segmentacaoTensor.dispose();
 
-                // O modelo produz uma segmentação com 4 classes
-                // Vamos calcular estatísticas básicas
-                const totalPixels = resultadoArray.length / 4; // 4 classes
+                // Calcular estatísticas (percentuais) - Mantenha isso
+                const totalPixels = segmentacaoArray.length;
                 const estatisticas = {
                     classe0: 0, // Background
                     classe1: 0, // Necrose
                     classe2: 0, // Edema
-                    classe3: 0  // Tumor realçado
+                    classe3: 0  // Tumor Realçado
                 };
 
-                // Conta pixels por classe (argmax)
                 for (let i = 0; i < totalPixels; i++) {
-                    const baseIdx = i * 4;
-                    let maxIdx = 0;
-                    let maxVal = resultadoArray[baseIdx];
-                    
-                    for (let j = 1; j < 4; j++) {
-                        if (resultadoArray[baseIdx + j] > maxVal) {
-                            maxVal = resultadoArray[baseIdx + j];
-                            maxIdx = j;
-                        }
-                    }
-                    
-                    switch(maxIdx) {
+                    switch(segmentacaoArray[i]) {
                         case 0: estatisticas.classe0++; break;
                         case 1: estatisticas.classe1++; break;
                         case 2: estatisticas.classe2++; break;
@@ -524,7 +520,6 @@
                     }
                 }
 
-                // Calcula porcentagens
                 const porcentagens = {
                     background: (estatisticas.classe0 / totalPixels * 100).toFixed(2),
                     necrose: (estatisticas.classe1 / totalPixels * 100).toFixed(2),
@@ -532,11 +527,8 @@
                     tumorRealcado: (estatisticas.classe3 / totalPixels * 100).toFixed(2)
                 };
 
-                // Limpa memória
-                previsao.dispose();
-                tensorEntrada.dispose();
-
-                return porcentagens;
+                // Retorna tanto os percentuais quanto os dados brutos da segmentação
+                return { porcentagens, segmentacaoArray, dimensoesSaida: [128, 128] }; // [altura, largura] - Fixado para 128x128
 
             } catch (error) {
                 console.error('Erro na previsão:', error);
@@ -544,24 +536,61 @@
             }
         }
 
-        // Função para exibir resultados
+        // Nova função para desenhar a segmentação no canvas
+        function desenharSegmentacao(segmentacaoArray, dimensoesSaida) {
+            const [altura, largura] = dimensoesSaida;
+
+            // Definir o tamanho do canvas
+            segmentationCanvas.width = largura;
+            segmentationCanvas.height = altura;
+
+            // Criar um objeto ImageData para manipular os pixels
+            const imageData = ctx.createImageData(largura, altura);
+            const data = imageData.data; // Array de pixels (RGBA)
+
+            // Definir cores para cada classe (ajuste conforme o notebook)
+            const cores = [
+                [0, 0, 0, 0],     // Classe 0: Transparente (ou preto, se preferir) - Background
+                [255, 0, 0, 255], // Classe 1: Vermelho - Necrose
+                [0, 0, 255, 255], // Classe 2: Azul - Edema
+                [0, 255, 0, 255]  // Classe 3: Verde - Tumor Realçado
+            ];
+
+            for (let i = 0; i < segmentacaoArray.length; i++) {
+                const classe = segmentacaoArray[i];
+                const cor = cores[classe];
+
+                const pixelIndex = i * 4; // Cada pixel tem 4 componentes (RGBA)
+                data[pixelIndex] = cor[0];     // R
+                data[pixelIndex + 1] = cor[1]; // G
+                data[pixelIndex + 2] = cor[2]; // B
+                data[pixelIndex + 3] = cor[3]; // A
+            }
+
+            // Desenhar a imagem no canvas
+            ctx.putImageData(imageData, 0, 0);
+        }
+
+        // Função para exibir resultados (modificada para chamar desenharSegmentacao)
         function exibirResultados(resultados) {
+            const { porcentagens, segmentacaoArray, dimensoesSaida } = resultados;
+
             const html = `
                 <div class="result-item">
                     <span class="result-label">🔵 Background:</span>
-                    <span class="result-value">${resultados.background}%</span>
+                    <span class="result-value">${porcentagens.background}%</span>
                 </div>
                 <div class="result-item">
                     <span class="result-label">🔴 Necrose:</span>
-                    <span class="result-value">${resultados.necrose}%</span>
+                    <span class="result-value">${porcentagens.necrose}%</span>
                 </div>
                 <div class="result-item">
                     <span class="result-label">🟡 Edema:</span>
-                    <span class="result-value">${resultados.edema}%</span>
+                    <span class="result-value">${porcentagens.edema}%</span>
                 </div>
                 <div class="result-item">
                     <span class="result-label">🟢 Tumor Realçado:</span>
-                    <span class="result-value">${resultados.tumorRealcado}%</span>
+                    <span class="result-value">${porcentagens.tumorRealcado}%</span>
                 </div>
                 <div style="margin-top: 15px; padding: 10px; background: #e3f2fd; border-radius: 5px;">
                     <small style="color: #1976d2;">
@@ -572,6 +601,9 @@
             `;
             
             resultsContent.innerHTML = html;
+
+            // Chamar a função para desenhar a segmentação
+            desenharSegmentacao(segmentacaoArray, dimensoesSaida);
         }
 
         // Event listener para upload de arquivo
@@ -631,4 +663,3 @@
     </script>
 </body>
 </html>
-
