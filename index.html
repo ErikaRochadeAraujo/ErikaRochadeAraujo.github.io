@@ -4,33 +4,35 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Analisador de Ressonância Magnética - IA</title>
-    
+
+    <script>
+    // Implemente todas as funções mostradas acima
+    // Certifique-se de chamar loadAllDependencies() quando a página carregar:
+        window.addEventListener('DOMContentLoaded', loadAllDependencies);
+   </script>
     <!-- Bibliotecas necessárias -->
    
     <script src="https://cdnjs.cloudflare.com/ajax/libs/pako/2.1.0/pako.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@latest/dist/tf.min.js"></script>
     <!-- Substitua a importação do NIFTI por esta versão mais estável -->
-    <script src="https://cdn.jsdelivr.net/npm/nifti-reader-js@0.5.4/dist/nifti-reader.min.js"></script>
+    <!-- Carrega NIFTI Reader de forma confiável -->
     <script>
-    // Verificação robusta do NIFTI
-    function verificarNIFTI() {
-        return new Promise((resolve) => {
-            let tentativas = 0;
-            const verificar = () => {
-                if (window.NIFTI) {
-                    console.log('NIFTI carregado com sucesso:', NIFTI.version);
-                    resolve(true);
-                } else if (tentativas < 3) {
-                    tentativas++;
-                    setTimeout(verificar, 1000);
-                } else {
-                    console.error('Falha ao carregar NIFTI após 3 tentativas');
-                    resolve(false);
-                }
-            };
-            verificar();
+      function loadNIFTI() {
+        return new Promise((resolve, reject) => {
+          const script = document.createElement('script');
+          script.src = 'https://cdn.jsdelivr.net/npm/nifti-reader-js@0.5.4/dist/nifti-reader.min.js';
+          script.onload = () => {
+            if (window.NIFTI) {
+              console.log('NIFTI carregado com sucesso');
+              resolve();
+            } else {
+              reject(new Error('Objeto NIFTI não definido'));
+            }
+          };
+          script.onerror = () => reject(new Error('Falha ao carregar script NIFTI'));
+          document.head.appendChild(script);
         });
-    }
+      }
     </script>
 
     
@@ -59,6 +61,36 @@
             background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
             min-height: 100vh;
             color: #333;
+        }
+
+        .fatal-error {
+          max-width: 500px;
+          margin: 50px auto;
+          padding: 30px;
+          background: #fff0f0;
+          border: 2px solid #ffcccc;
+          border-radius: 10px;
+          text-align: center;
+        }
+        
+        .fatal-error h2 {
+          color: #d32f2f;
+          margin-bottom: 15px;
+        }
+        
+        .fatal-error p {
+          margin: 10px 0;
+          color: #555;
+        }
+        
+        .fatal-error button {
+          background: #d32f2f;
+          color: white;
+          border: none;
+          padding: 10px 20px;
+          border-radius: 5px;
+          cursor: pointer;
+          margin-top: 20px;
         }
 
         .container {
@@ -353,24 +385,83 @@
         }
 
 
-        async function inicializarTFJS() {
-            try {
-                // Força o backend WebGL
-                await tf.setBackend('webgl');
-                console.log('Backend do TF.js:', tf.getBackend());
-                
-                // Verifica se o backend está funcionando
-                const testTensor = tf.tensor1d([1, 2, 3]);
-                await testTensor.data();
-                testTensor.dispose();
-                
-                return true;
-            } catch (error) {
-                console.error('Erro ao inicializar TensorFlow.js:', error);
-                return false;
+        async function initializeTFJS() {
+          try {
+            // 1. Tenta carregar WebGL primeiro
+            await tf.setBackend('webgl');
+            
+            // 2. Verificação explícita do backend
+            if (tf.getBackend() !== 'webgl') {
+              console.warn('WebGL não disponível, tentando CPU');
+              await tf.setBackend('cpu');
             }
+            
+            // 3. Teste prático do backend
+            const testTensor = tf.tensor1d([1, 2, 3]);
+            await testTensor.data();
+            testTensor.dispose();
+            
+            console.log(`Backend inicializado: ${tf.getBackend()}`);
+            return true;
+          } catch (error) {
+            console.error('Falha na inicialização do TF.js:', error);
+            return false;
+          }
         }
 
+
+        async function loadAllDependencies() {
+          try {
+            // 1. Carrega NIFTI primeiro
+            atualizarStatus('🔍 Carregando leitor de arquivos...', 'info', true);
+            await loadNIFTI();
+            
+            // 2. Inicializa TensorFlow.js
+            atualizarStatus('⚙️ Configurando acelerador gráfico...', 'info', true);
+            const tfInitialized = await initializeTFJS();
+            if (!tfInitialized) {
+              throw new Error('Aceleração gráfica indisponível');
+            }
+            
+            // 3. Carrega o modelo
+            atualizarStatus('🧠 Carregando modelo de IA...', 'info', true);
+            modelo = await tf.loadLayersModel('modelo_web/model.json');
+            
+            // Verificação final
+            if (!modelo || !modelo.inputs) {
+              throw new Error('Modelo carregado incorretamente');
+            }
+            
+            atualizarStatus('✅ Sistema pronto!', 'success');
+            modeloCarregado = true;
+            
+          } catch (error) {
+            console.error('Erro no carregamento:', error);
+            showFatalError(error);
+          }
+        }
+        
+        function showFatalError(error) {
+          let message = 'Erro crítico no sistema';
+          let solution = 'Recarregue a página ou tente mais tarde.';
+          
+          if (error.message.includes('NIFTI')) {
+            message = 'Leitor de arquivos não disponível';
+            solution = 'Atualize seu navegador ou tente no Chrome/Edge.';
+          } else if (error.message.includes('aceleração')) {
+            message = 'Problema gráfico detectado';
+            solution = 'Ative WebGL nas configurações do navegador.';
+          }
+          
+          document.getElementById('app-container').innerHTML = `
+            <div class="fatal-error">
+              <h2>${message}</h2>
+              <p>${solution}</p>
+              <p><small>Detalhes: ${error.message}</small></p>
+              <button onclick="window.location.reload()">Recarregar</button>
+            </div>
+          `;
+        }
 
 
         
