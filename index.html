@@ -7,6 +7,7 @@
     
     <!-- Bibliotecas necessárias -->
    
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pako/2.1.0/pako.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@latest/dist/tf.min.js"></script>
     <script type="module">
         import NIFTI from 'https://esm.sh/nifti-reader-js@0.5.4';
@@ -358,53 +359,101 @@
             }
         }
 
-        // Função para processar arquivo NIfTI
+            // Função para processar arquivo NIfTI (atualizada)
         async function processarArquivoNifti(arquivo) {
             try {
                 atualizarStatus('📖 Lendo arquivo NIfTI...', 'info', true);
                 atualizarProgresso(25);
-
-                // Lê o arquivo como ArrayBuffer
+        
+                // Carrega pako dinamicamente se não estiver disponível
+                if (typeof pako === 'undefined') {
+                    await carregarScript('https://cdnjs.cloudflare.com/ajax/libs/pako/2.1.0/pako.min.js');
+                }
+        
                 const buffer = await arquivo.arrayBuffer();
-                
-                // Verifica se é um arquivo .nii.gz (comprimido)
                 let dadosBuffer = buffer;
+                
+                // Descompacta se for .gz
                 if (arquivo.name.endsWith('.gz')) {
                     atualizarStatus('📦 Descomprimindo arquivo...', 'info', true);
-                    dadosBuffer = pako.inflate(new Uint8Array(buffer)).buffer;
+                    const compressed = new Uint8Array(buffer);
+                    dadosBuffer = pako.inflate(compressed).buffer;
                 }
-
+        
                 atualizarProgresso(50);
-
-                // Verifica se é um arquivo NIfTI válido
+        
                 if (!NIFTI.isNIFTI(dadosBuffer)) {
-                    throw new Error("O arquivo selecionado não é um arquivo NIfTI válido.");
+                    throw new Error("Arquivo NIfTI inválido");
                 }
-
-                // Lê o header e os dados da imagem
+        
                 const header = NIFTI.readHeader(dadosBuffer);
                 const imagemData = NIFTI.readImage(header, dadosBuffer);
                 
-                atualizarStatus('🔄 Pré-processando dados...', 'info', true);
-                atualizarProgresso(75);
-
-                console.log('Dimensões da imagem:', header.dims);
-                console.log('Tipo de dados:', header.datatypeCode);
-
-                // Converte para Float32Array
+                // Converte para Float32Array e normaliza
                 const dadosFloat32 = new Float32Array(imagemData);
+                const maxVal = Math.max(...dadosFloat32);
+                const minVal = Math.min(...dadosFloat32);
                 
+                for (let i = 0; i < dadosFloat32.length; i++) {
+                    dadosFloat32[i] = (dadosFloat32[i] - minVal) / (maxVal - minVal);
+                }
+        
                 return {
                     dados: dadosFloat32,
                     header: header,
-                    dimensoes: header.dims.slice(1, 4) // Remove a primeira dimensão (que é sempre 0)
+                    dimensoes: header.dims.slice(1, 4)
                 };
-
+        
             } catch (error) {
-                console.error('Erro ao processar arquivo NIfTI:', error);
-                throw error;
+                console.error('Erro ao processar NIfTI:', error);
+                throw new Error(`Falha ao processar arquivo: ${error.message}`);
             }
         }
+        
+        // Função auxiliar para carregar scripts dinamicamente
+        function carregarScript(url) {
+            return new Promise((resolve, reject) => {
+                const script = document.createElement('script');
+                script.src = url;
+                script.onload = resolve;
+                script.onerror = reject;
+                document.head.appendChild(script);
+            });
+        }
+
+                // Função para visualizar uma fatia da imagem NIfTI
+        function visualizarFatia(dados, header, fatiaIndex) {
+            const [altura, largura, profundidade] = header.dims.slice(1, 4);
+            fatiaIndex = Math.min(Math.max(0, fatiaIndex), profundidade - 1);
+            
+            // Cria canvas para visualização
+            const canvas = document.createElement('canvas');
+            canvas.width = largura;
+            canvas.height = altura;
+            const ctx = canvas.getContext('2d');
+            
+            // Cria imagem em escala de cinza
+            const imageData = ctx.createImageData(largura, altura);
+            const fatiaSize = altura * largura;
+            
+            for (let i = 0; i < altura; i++) {
+                for (let j = 0; j < largura; j++) {
+                    const idx3D = (fatiaIndex * fatiaSize) + (i * largura) + j;
+                    const valor = Math.floor(dados[idx3D] * 255);
+                    const pixelIdx = (i * largura + j) * 4;
+                    
+                    imageData.data[pixelIdx] = valor;     // R
+                    imageData.data[pixelIdx + 1] = valor; // G
+                    imageData.data[pixelIdx + 2] = valor; // B
+                    imageData.data[pixelIdx + 3] = 255;   // Alpha
+                }
+            }
+            
+            ctx.putImageData(imageData, 0, 0);
+            return canvas;
+        }
+        
+       
 
         // Função para pré-processar os dados para o modelo
         function preprocessarDados(dados, dimensoes) {
@@ -544,24 +593,48 @@
             }
         }
 
-        // Função para exibir resultados
-        function exibirResultados(resultados) {
+        function exibirResultados(resultados, dadosNifti, header) {
+            // Visualiza fatias
+            const fatiaMedia = Math.floor(header.dims[3] / 2);
+            const canvas = visualizarFatia(dadosNifti, header, fatiaMedia);
+            
             const html = `
-                <div class="result-item">
-                    <span class="result-label">🔵 Background:</span>
-                    <span class="result-value">${resultados.background}%</span>
-                </div>
-                <div class="result-item">
-                    <span class="result-label">🔴 Necrose:</span>
-                    <span class="result-value">${resultados.necrose}%</span>
-                </div>
-                <div class="result-item">
-                    <span class="result-label">🟡 Edema:</span>
-                    <span class="result-value">${resultados.edema}%</span>
-                </div>
-                <div class="result-item">
-                    <span class="result-label">🟢 Tumor Realçado:</span>
-                    <span class="result-value">${resultados.tumorRealcado}%</span>
+                <div style="display: flex; flex-wrap: wrap; gap: 20px; margin-bottom: 20px;">
+                    <div style="flex: 1; min-width: 300px;">
+                        <h3>Visualização da Fatia ${fatiaMedia}</h3>
+                        ${canvas.outerHTML}
+                    </div>
+                    <div style="flex: 1; min-width: 300px;">
+                        <h3>Estatísticas do Tumor</h3>
+                        <div class="result-item">
+                            <span class="result-label">🔵 Background:</span>
+                            <span class="result-value">${resultados.background}%</span>
+                            <div style="height: 5px; background: #e0e0e0; margin-top: 5px;">
+                                <div style="height: 100%; width: ${resultados.background}%; background: #4285F4;"></div>
+                            </div>
+                        </div>
+                        <div class="result-item">
+                            <span class="result-label">🔴 Necrose:</span>
+                            <span class="result-value">${resultados.necrose}%</span>
+                            <div style="height: 5px; background: #e0e0e0; margin-top: 5px;">
+                                <div style="height: 100%; width: ${resultados.necrose}%; background: #EA4335;"></div>
+                            </div>
+                        </div>
+                        <div class="result-item">
+                            <span class="result-label">🟡 Edema:</span>
+                            <span class="result-value">${resultados.edema}%</span>
+                            <div style="height: 5px; background: #e0e0e0; margin-top: 5px;">
+                                <div style="height: 100%; width: ${resultados.edema}%; background: #FBBC05;"></div>
+                            </div>
+                        </div>
+                        <div class="result-item">
+                            <span class="result-label">🟢 Tumor Realçado:</span>
+                            <span class="result-value">${resultados.tumorRealcado}%</span>
+                            <div style="height: 5px; background: #e0e0e0; margin-top: 5px;">
+                                <div style="height: 100%; width: ${resultados.tumorRealcado}%; background: #34A853;"></div>
+                            </div>
+                        </div>
+                    </div>
                 </div>
                 <div style="margin-top: 15px; padding: 10px; background: #e3f2fd; border-radius: 5px;">
                     <small style="color: #1976d2;">
