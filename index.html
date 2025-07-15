@@ -9,9 +9,20 @@
    
     <script src="https://cdnjs.cloudflare.com/ajax/libs/pako/2.1.0/pako.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@latest/dist/tf.min.js"></script>
-    <script type="module">
-        import NIFTI from 'https://esm.sh/nifti-reader-js@0.5.4';
-        window.NIFTI = NIFTI;
+    <script src="https://cdn.jsdelivr.net/npm/nifti-reader-js@0.5.4/dist/nifti-reader.min.js"></script>
+    <script>
+        // Verifica se NIFTI está disponível
+        document.addEventListener('DOMContentLoaded', function() {
+            if (typeof NIFTI === 'undefined') {
+                console.error('NIFTI ainda não está disponível');
+                // Tenta carregar novamente após um delay
+                setTimeout(() => {
+                    if (typeof NIFTI === 'undefined') {
+                        alert('Erro crítico: Não foi possível carregar a biblioteca NIFTI. Por favor, recarregue a página.');
+                    }
+                }, 2000);
+            }
+        });
     </script>
 
 
@@ -333,28 +344,59 @@
             }
         }
 
+
+        async function inicializarTFJS() {
+            try {
+                // Força o backend WebGL
+                await tf.setBackend('webgl');
+                console.log('Backend do TF.js:', tf.getBackend());
+                
+                // Verifica se o backend está funcionando
+                const testTensor = tf.tensor1d([1, 2, 3]);
+                await testTensor.data();
+                testTensor.dispose();
+                
+                return true;
+            } catch (error) {
+                console.error('Erro ao inicializar TensorFlow.js:', error);
+                return false;
+            }
+        }
+
+
+
+        
         // Função para carregar o modelo
         async function carregarModelo() {
             try {
+                atualizarStatus('🤖 Inicializando TensorFlow.js...', 'info', true);
+                
+                // Inicializa TF.js primeiro
+                const tfjsInicializado = await inicializarTFJS();
+                if (!tfjsInicializado) {
+                    throw new Error('Não foi possível inicializar TensorFlow.js');
+                }
+                
                 atualizarStatus('🤖 Carregando modelo de IA...', 'info', true);
                 atualizarProgresso(20);
                 
-                // Carrega o modelo do TensorFlow.js
+                // Carrega o modelo
                 modelo = await tf.loadLayersModel('./modelo_web/model.json');
                 
                 atualizarProgresso(100);
-                atualizarStatus('✅ Modelo carregado com sucesso! Selecione um arquivo .nii para análise.', 'success');
+                atualizarStatus('✅ Modelo carregado com sucesso!', 'success');
                 modeloCarregado = true;
                 
                 console.log('Modelo carregado:', modelo);
-                console.log('Formato de entrada esperado:', modelo.inputs[0].shape);
+                console.log('Backend atual:', tf.getBackend());
+                console.log('Formato de entrada:', modelo.inputs[0].shape);
                 console.log('Formato de saída:', modelo.outputs[0].shape);
                 
                 setTimeout(() => atualizarProgresso(0), 2000);
                 
             } catch (error) {
                 console.error('Erro ao carregar modelo:', error);
-                atualizarStatus('❌ Erro ao carregar o modelo. Verifique se os arquivos estão no local correto.', 'error');
+                atualizarStatus('❌ Erro ao carregar o modelo: ' + error.message, 'error');
                 atualizarProgresso(0);
             }
         }
@@ -406,7 +448,7 @@
             });
         }
 
-                // Função para visualizar uma fatia da imagem NIfTI
+        // Função para visualizar uma fatia da imagem NIfTI
         function visualizarFatia(dados, header, fatiaIndex) {
             const [altura, largura, profundidade] = header.dims.slice(1, 4);
             fatiaIndex = Math.min(Math.max(0, fatiaIndex), profundidade - 1);
@@ -657,51 +699,53 @@
         }
 
         // Event listener para upload de arquivo
-        inputArquivo.addEventListener('change', async function(evento) {
-            if (!modeloCarregado) {
-                atualizarStatus('⏳ Aguarde o modelo terminar de carregar...', 'error');
-                return;
-            }
+        inputArquivo.addEventListener('change', function(evento) {
+            (async function() {
+                if (!modeloCarregado) {
+                    atualizarStatus('⏳ Aguarde o modelo terminar de carregar...', 'error');
+                    return;
+                }
         
-            if (evento.target.files.length === 0) return;
+                if (evento.target.files.length === 0) return;
         
-            const arquivo = evento.target.files[0];
-            
-            try {
-                atualizarStatus(`📁 Processando: ${arquivo.name}`, 'info', true);
+                const arquivo = evento.target.files[0];
                 
-                // Processa o arquivo NIfTI
-                const dadosProcessados = await processarArquivoNifti(arquivo);
-                
-                // Pré-processa os dados
-                const tensorEntrada = preprocessarDados(dadosProcessados.dados, dadosProcessados.dimensoes);
-                
-                // Faz a previsão
-                const resultados = await fazerPrevisao(tensorEntrada);
-                
-                // Exibe os resultados com visualização
-                exibirResultados(resultados, dadosProcessados.dados, dadosProcessados.header);
-                
-                atualizarProgresso(100);
-                atualizarStatus('✅ Análise concluída com sucesso!', 'success');
-                
-                setTimeout(() => atualizarProgresso(0), 3000);
+                try {
+                    atualizarStatus(`📁 Processando: ${arquivo.name}`, 'info', true);
+                    
+                    // Processa o arquivo NIfTI
+                    const dadosProcessados = await processarArquivoNifti(arquivo);
+                    
+                    // Pré-processa os dados
+                    const tensorEntrada = preprocessarDados(dadosProcessados.dados, dadosProcessados.dimensoes);
+                    
+                    // Faz a previsão
+                    const resultados = await fazerPrevisao(tensorEntrada);
+                    
+                    // Exibe os resultados
+                    exibirResultados(resultados, dadosProcessados.dados, dadosProcessados.header);
+                    
+                    atualizarProgresso(100);
+                    atualizarStatus('✅ Análise concluída com sucesso!', 'success');
+                    
+                    setTimeout(() => atualizarProgresso(0), 3000);
         
-            } catch (error) {
-                console.error('Erro durante o processamento:', error);
-                atualizarStatus(`❌ Erro: ${error.message}`, 'error');
-                atualizarProgresso(0);
-                
-                resultsContent.innerHTML = `
-                    <div style="text-align: center; color: #dc3545; padding: 20px;">
-                        <p><strong>Erro no processamento:</strong></p>
-                        <p>${error.message}</p>
-                        <p style="margin-top: 10px; font-size: 0.9em; color: #6c757d;">
-                            Verifique se o arquivo é um NIfTI válido (.nii ou .nii.gz)
-                        </p>
-                    </div>
-                `;
-            }
+                } catch (error) {
+                    console.error('Erro durante o processamento:', error);
+                    atualizarStatus(`❌ Erro: ${error.message}`, 'error');
+                    atualizarProgresso(0);
+                    
+                    resultsContent.innerHTML = `
+                        <div style="text-align: center; color: #dc3545; padding: 20px;">
+                            <p><strong>Erro no processamento:</strong></p>
+                            <p>${error.message}</p>
+                            <p style="margin-top: 10px; font-size: 0.9em; color: #6c757d;">
+                                Verifique se o arquivo é um NIfTI válido (.nii ou .nii.gz)
+                            </p>
+                        </div>
+                    `;
+                }
+            })().catch(err => console.error('Erro não tratado:', err));
         });
 
         // Inicia o carregamento do modelo quando a página carrega
@@ -711,6 +755,10 @@
         console.log('TensorFlow.js versão:', tf.version.tfjs);
         console.log('Backend:', tf.getBackend());
     </script>
+
+console.log('Backends disponíveis:', tf.engine().backendNames);
+console.log('Backend atual:', tf.getBackend());
+    
 </body>
 </html>
 
